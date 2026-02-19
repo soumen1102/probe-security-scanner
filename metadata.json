@@ -1,0 +1,5 @@
+{
+  "name": "Probe Web Security Scanner",
+  "description": "An AI-powered cybersecurity tool that performs deep URL analysis to identify malicious hosting, security posture vulnerabilities, and historical incident data.",
+  "requestFramePermissions": []
+}
