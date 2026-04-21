@@ -93,7 +93,8 @@ export const Captcha: React.FC<CaptchaProps> = ({ onVerify }) => {
     if (isSpeaking) return;
     setIsSpeaking(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const apiKey = (globalThis as any).process?.env?.API_KEY || process.env.GEMINI_API_KEY || "";
+      const ai = new GoogleGenAI({ apiKey });
       const spelledCode = code.split('').join(' ');
       const prompt = `Say clearly: ${spelledCode}`;
 

@@ -51,13 +51,45 @@ import {
   Coffee,
   Cloud,
   ToggleLeft,
-  ToggleRight
+  ToggleRight,
+  Clipboard,
+  Check
 } from 'lucide-react';
 import { Logo } from './components/Logo';
 import { Captcha } from './components/Captcha';
-import { performUrlScan } from './services/geminiService';
+import { performUrlScan, GeminiProxy } from './services/geminiService';
 import { ScanResult, GroundingSource, Incident, ScanConfig } from './types';
 import { generatePdfReport } from './utils/pdfGenerator';
+
+interface ScanHistoryItem {
+  url: string;
+  score: number;
+  timestamp: string;
+}
+
+function timeAgo(dateString: string) {
+  const now = new Date();
+  const past = new Date(dateString);
+  const diffMs = now.getTime() - past.getTime();
+  const diffSecs = Math.floor(diffMs / 1000);
+  const diffMins = Math.floor(diffSecs / 60);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffSecs < 60) return `${diffSecs} seconds ago`;
+  if (diffMins < 60) return `${diffMins} minutes ago`;
+  if (diffHours < 24) return `${diffHours} hours ago`;
+  return `${diffDays} days ago`;
+}
+
+declare global {
+  interface Window {
+    aistudio?: {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
+    };
+  }
+}
 
 type Theme = 'slate' | 'midnight' | 'cyber' | 'oceanic' | 'volcanic' | 'emerald' | 'amethyst';
 type FontSize = 'xs' | 'sm' | 'md' | 'lg';
@@ -138,6 +170,12 @@ const translations = {
       compliance: "Compliance Check",
       general: "Safe Link Check"
     },
+    genericError: "A technical issue occurred during the forensic audit. Our neural nodes are recalibrating. Please verify the URL and try again later.",
+    testConnection: "Test API Connection",
+    testSuccess: "API Connection Successful",
+    testFailure: "API Connection Failed",
+    copyException: "Copy Exception",
+    copied: "Copied!",
     useCaseText: {
       secops: "Instantly validate if web perimeters are protected by Cloudflare, Akamai, or AWS WAF.",
       itpro: "Verify SSL/TLS configurations, protocol support, and certificate validity for any domain.",
@@ -222,6 +260,12 @@ const translations = {
       compliance: "अनुपालन जांच",
       general: "सुरक्षित लिंक जांच"
     },
+    genericError: "फोरेंसिक ऑडिट के दौरान एक तकनीकी समस्या आई। हमारे न्यूरल नोड्स पुनर्गणना कर रहे हैं। कृपया URL सत्यापित करें और बाद में पुनः प्रयास करें।",
+    testConnection: "API कनेक्शन का परीक्षण करें",
+    testSuccess: "API कनेक्शन सफल",
+    testFailure: "API कनेक्शन विफल",
+    copyException: "अपवाद कॉपी करें",
+    copied: "कॉपी किया गया!",
     useCaseText: {
       secops: "देखें कि क्या वेब परिधि क्लाउडफ्लेयर या AWS WAF द्वारा सुरक्षित है।",
       itpro: "किसी भी डोमेन के लिए SSL/TLS कॉन्फ़िगरेशन और प्रमाणपत्र वैधता सत्यापित करें।",
@@ -236,11 +280,13 @@ const translations = {
 
 const App: React.FC = () => {
   const [url, setUrl] = useState('');
-  const [isCaptchVerified, setIsCaptchaVerified] = useState(false);
+  const [isCaptchaVerified, setIsCaptchaVerified] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [sources, setSources] = useState<GroundingSource[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [detailedError, setDetailedError] = useState<string | null>(null);
+  const [isCopied, setIsCopied] = useState(false);
   const [theme, setTheme] = useState<Theme>('slate');
   const [fontSize, setFontSize] = useState<FontSize>('lg');
   const [language, setLanguage] = useState<Language>('en');
@@ -248,6 +294,74 @@ const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isIncidentModalOpen, setIsIncidentModalOpen] = useState(false);
   const [detailPopup, setDetailPopup] = useState<{ title: string; content: string } | null>(null);
+  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [testResult, setTestResult] = useState<'success' | 'failure' | null>(null);
+  const [scanHistory, setScanHistory] = useState<ScanHistoryItem[]>([]);
+  const [showHistoryOnHome, setShowHistoryOnHome] = useState(true);
+  const [isApiReady, setIsApiReady] = useState<boolean | null>(null);
+  
+  useEffect(() => {
+    const checkApiKey = async () => {
+      let hasKey = false;
+      if (window.aistudio) {
+        try {
+          const selected = await window.aistudio.hasSelectedApiKey();
+          setHasApiKey(selected);
+          hasKey = selected;
+        } catch (e) {
+          console.error("Error checking API key:", e);
+          setHasApiKey(true); // Fallback
+          hasKey = true;
+        }
+      } else {
+        setHasApiKey(true);
+        hasKey = true;
+      }
+
+      // Background task to establish connection and verify API is up and running
+      if (hasKey) {
+        try {
+          const apiKey = (globalThis as any).process?.env?.API_KEY || process.env.GEMINI_API_KEY || "";
+          const proxy = new GeminiProxy(apiKey);
+          const success = await proxy.testConnection();
+          setIsApiReady(success);
+          if (success) {
+            console.log("Background Check: Gemini API is up and running.");
+          } else {
+            console.warn("Background Check: Gemini API test failed.");
+          }
+        } catch (err) {
+          console.error("Background Check: Error testing Gemini API connection:", err);
+          setIsApiReady(false);
+        }
+      }
+    };
+    checkApiKey();
+  }, []);
+
+  const handleConnectKey = async () => {
+    if (window.aistudio) {
+      await window.aistudio.openSelectKey();
+      setHasApiKey(true); // Proceed after triggering dialog
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setIsTestingConnection(true);
+    setTestResult(null);
+    try {
+      const apiKey = (globalThis as any).process?.env?.API_KEY || process.env.GEMINI_API_KEY || "";
+      const proxy = new GeminiProxy(apiKey);
+      const success = await proxy.testConnection();
+      setTestResult(success ? 'success' : 'failure');
+    } catch (e) {
+      setTestResult('failure');
+    } finally {
+      setIsTestingConnection(false);
+      setTimeout(() => setTestResult(null), 3000);
+    }
+  };
   
   const [scanConfig, setScanConfig] = useState<ScanConfig>({
     hosting: true,
@@ -284,7 +398,7 @@ const App: React.FC = () => {
 
   const handleScan = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!url || !isCaptchVerified) return;
+    if (!url || !isCaptchaVerified) return;
 
     // Smart Validation: Prepend https:// if protocol is missing
     let targetUrl = url.trim();
@@ -295,6 +409,8 @@ const App: React.FC = () => {
 
     setIsScanning(true);
     setError(null);
+    setDetailedError(null);
+    setIsCopied(false);
     setScanResult(null);
     setScanDuration(0);
     setFinalDuration(null);
@@ -311,8 +427,39 @@ const App: React.FC = () => {
       setCaptchaKey(prev => prev + 1);
       setIsCaptchaVerified(false);
       setFinalDuration(Math.floor((Date.now() - startTime) / 1000));
+      
+      setScanHistory(prev => {
+        const newItem = { url: targetUrl, score: result.masterRating, timestamp: new Date().toISOString() };
+        return [newItem, ...prev].slice(0, 10);
+      });
     } catch (err: any) {
-      setError(err.message || (language === 'hi' ? 'स्कैनिंग के दौरान एक त्रुटि हुई। कृपया URL की जाँच करें।' : 'An error occurred during scanning. Please check the URL and try again.'));
+      console.error("Forensic Scan Exception:", err);
+      setError(err.message || t.genericError);
+      
+      let fullTrace = "";
+      try {
+        const errorDetails: any = {
+          message: err.message,
+          name: err.name,
+          status: err.status,
+          statusText: err.statusText,
+          details: err.details,
+          stack: err.stack
+        };
+        
+        // Add any other enumerable properties from the error object
+        Object.getOwnPropertyNames(err).forEach(key => {
+          if (!(key in errorDetails)) {
+            errorDetails[key] = err[key];
+          }
+        });
+        
+        fullTrace = JSON.stringify(errorDetails, null, 2);
+      } catch (e) {
+        fullTrace = String(err) + "\n" + (err.stack || "");
+      }
+      
+      setDetailedError(fullTrace);
       setCaptchaKey(prev => prev + 1);
       setIsCaptchaVerified(false);
     } finally {
@@ -332,9 +479,22 @@ const App: React.FC = () => {
 
   const handleNewScan = () => {
     setScanResult(null);
+    setError(null);
+    setDetailedError(null);
+    setIsCopied(false);
     setUrl('');
     setIsCaptchaVerified(false);
     setCaptchaKey(prev => prev + 1);
+  };
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy: ', err);
+    }
   };
 
   const getThemeConfig = () => {
@@ -403,6 +563,38 @@ const App: React.FC = () => {
 
   return (
     <div className={`min-h-screen text-slate-200 selection:bg-blue-500/30 transition-colors duration-500 pb-4 flex flex-col`}>
+      {hasApiKey === false && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-950">
+          <div className="max-w-md w-full text-center space-y-8 p-8 bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl">
+            <div className="flex justify-center">
+              <Logo accentColor={themeConfig.accent} size={80} />
+            </div>
+            <div className="space-y-4">
+              <h2 className="text-2xl font-black uppercase italic tracking-tighter text-white">Advanced AI Activation Required</h2>
+              <p className="text-slate-400 text-sm leading-relaxed">
+                To utilize the <strong>Gemini 3.1 Pro</strong> forensic engine with deep reasoning capabilities, you must connect your own API key.
+              </p>
+              <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-xl text-left">
+                <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-1">Billing Information</p>
+                <p className="text-[11px] text-slate-500">
+                  Please ensure you select an API key from a paid Google Cloud project. 
+                  <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline ml-1 inline-flex items-center gap-1">
+                    View Billing Docs <ExternalLink size={10} />
+                  </a>
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleConnectKey}
+              className={`w-full py-4 rounded-xl font-black transition-all flex items-center justify-center gap-3 ${themeConfig.btn} border-b-4 border-slate-950/20 shadow-lg hover:brightness-110`}
+            >
+              <Key size={20} />
+              <span className="tracking-widest uppercase text-sm">Connect API Key</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="fixed inset-0 overflow-hidden pointer-events-none opacity-20 z-0">
         <div className={`absolute top-[-10%] left-[-10%] w-[50%] h-[50%] ${themeConfig.bg} blur-[120px] rounded-full transition-all duration-1000`}></div>
         <div className={`absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] ${themeConfig.bg} blur-[120px] rounded-full transition-all duration-1000 opacity-50`}></div>
@@ -432,6 +624,11 @@ const App: React.FC = () => {
                 </button>
               ))}
             </nav>
+
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl" title={isApiReady === null ? "Checking API Status..." : isApiReady ? "API Connected" : "API Connection Failed"}>
+              <div className={`w-2 h-2 rounded-full ${isApiReady === null ? 'bg-yellow-500 animate-pulse' : isApiReady ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 hidden sm:inline-block">API</span>
+            </div>
 
             <button 
               onClick={() => setIsSettingsOpen(true)}
@@ -477,6 +674,20 @@ const App: React.FC = () => {
           <div className="space-y-8 overflow-y-auto max-h-[calc(100vh-120px)] pr-2">
             <div>
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-4">{t.scanArchitecture}</label>
+              <div className="space-y-2 mb-6">
+                <button
+                  onClick={handleTestConnection}
+                  disabled={isTestingConnection}
+                  className={`w-full py-3 rounded-xl font-black transition-all flex items-center justify-center gap-2 border text-[11px] uppercase tracking-widest ${
+                    testResult === 'success' ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400' :
+                    testResult === 'failure' ? 'bg-red-500/20 border-red-500 text-red-400' :
+                    'bg-slate-950 border-slate-800 text-slate-400 hover:border-blue-500/50'
+                  }`}
+                >
+                  {isTestingConnection ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+                  {testResult === 'success' ? t.testSuccess : testResult === 'failure' ? t.testFailure : t.testConnection}
+                </button>
+              </div>
               <div className="space-y-2">
                 <ConfigToggle label={t.hostingRep} icon={Server} active={scanConfig.hosting} onToggle={() => toggleConfig('hosting')} />
                 <ConfigToggle label={t.securityTls} icon={Lock} active={scanConfig.security} onToggle={() => toggleConfig('security')} />
@@ -540,6 +751,21 @@ const App: React.FC = () => {
                   </button>
                 ))}
               </div>
+            </div>
+            
+            <div className="pt-4 border-t border-slate-800">
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <div className="relative flex items-center justify-center w-5 h-5 rounded border border-slate-700 bg-slate-950 group-hover:border-blue-500 transition-colors">
+                  <input 
+                    type="checkbox" 
+                    checked={!showHistoryOnHome}
+                    onChange={(e) => setShowHistoryOnHome(!e.target.checked)}
+                    className="absolute opacity-0 w-full h-full cursor-pointer"
+                  />
+                  {!showHistoryOnHome && <Check size={14} className="text-blue-500" />}
+                </div>
+                <span className="text-xs font-medium text-slate-400 group-hover:text-slate-300 transition-colors">Do not show on home screen</span>
+              </label>
             </div>
           </div>
         </div>
@@ -666,7 +892,7 @@ const App: React.FC = () => {
                     </div>
                     <button
                       type="submit"
-                      disabled={isScanning || !isCaptchVerified || !url}
+                      disabled={isScanning || !isCaptchaVerified || !url}
                       className={`px-6 py-3 rounded-xl font-black transition-all flex items-center justify-center gap-3 active:translate-y-0.5 ${themeConfig.btn} border-b-4 border-slate-950/20 shadow-lg hover:brightness-110 disabled:opacity-50 disabled:translate-y-0`}
                     >
                       {isScanning ? <Loader2 className="animate-spin" size={18} /> : <Cpu size={18} />}
@@ -679,6 +905,54 @@ const App: React.FC = () => {
                     </div>
                   </div>
                 </form>
+
+                {showHistoryOnHome && scanHistory.length > 0 && (
+                  <div className="mt-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-xs font-black uppercase tracking-widest text-slate-500">Recent Scans</h3>
+                    </div>
+                    <div className="grid gap-2">
+                      {scanHistory.map((item, idx) => {
+                        let hostname = item.url;
+                        try {
+                          hostname = new URL(item.url).hostname;
+                        } catch (e) {
+                          // Ignore if not a valid URL
+                        }
+                        
+                        return (
+                          <div key={idx} className="flex items-center justify-between p-3 bg-slate-900/40 border border-slate-800/50 rounded-xl hover:bg-slate-800/60 transition-colors">
+                            <div className="flex items-center gap-3 overflow-hidden flex-1 min-w-0">
+                              <img 
+                                src={`https://logo.clearbit.com/${hostname}`}
+                                onError={(e) => {
+                                  // Fallback to thumbnail if logo is not available
+                                  const target = e.currentTarget as HTMLImageElement;
+                                  if (!target.src.includes('image.thum.io')) {
+                                    target.src = `https://image.thum.io/get/width/128/crop/128/${item.url}`;
+                                  } else {
+                                    // If thumbnail also fails, fallback to a generic globe icon from google
+                                    target.src = `https://www.google.com/s2/favicons?domain=${hostname}&sz=128`;
+                                  }
+                                }}
+                                alt="logo"
+                                className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg bg-slate-800/50 object-cover shrink-0 border border-slate-700/50"
+                                referrerPolicy="no-referrer"
+                              />
+                              <div className="flex flex-col overflow-hidden min-w-0">
+                                <span className="text-sm font-mono text-slate-300 truncate block">{item.url}</span>
+                                <span className="text-[10px] text-slate-500 uppercase tracking-widest mt-1 block truncate">{timeAgo(item.timestamp)}</span>
+                              </div>
+                            </div>
+                            <div className={`flex items-center justify-center w-10 h-10 sm:w-12 sm:h-12 rounded-lg font-black shrink-0 ml-3 sm:ml-4 text-sm sm:text-base ${item.score > 75 ? 'bg-emerald-500/20 text-emerald-400' : item.score > 50 ? 'bg-orange-500/20 text-orange-400' : 'bg-red-500/20 text-red-400'}`}>
+                              {item.score}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -686,19 +960,30 @@ const App: React.FC = () => {
 
         {isScanning && (
           <div className="max-w-xl mx-auto text-center py-16 flex-1 flex flex-col justify-center">
-            <div className="relative w-32 h-32 mx-auto mb-8 animate-float">
-              <svg className="w-full h-full transform -rotate-90 overflow-visible" viewBox="0 0 112 112">
+            <div className={`relative w-40 h-40 mx-auto mb-12 animate-float ${themeConfig.textAccent}`}>
+              {/* Shockwave ping */}
+              <div className="absolute inset-0 rounded-full bg-current opacity-20 animate-ping" style={{ animationDuration: '1.5s' }}></div>
+              
+              {/* Electrifying rotating rings */}
+              <div className="absolute -inset-4 rounded-full border-y-4 border-transparent border-t-current border-b-current animate-spin opacity-80" style={{ animationDuration: '0.6s' }}></div>
+              <div className="absolute -inset-1 rounded-full border-x-4 border-transparent border-l-current border-r-current animate-spin opacity-60" style={{ animationDuration: '0.8s', animationDirection: 'reverse' }}></div>
+              
+              <svg className="absolute inset-0 w-full h-full transform -rotate-90 overflow-visible drop-shadow-[0_0_15px_currentColor]" viewBox="0 0 112 112">
                 <circle cx="56" cy="56" r="50" stroke="#1e293b" strokeWidth="4" fill="transparent" />
                 <circle
                   cx="56" cy="56" r="50"
                   stroke="currentColor" strokeWidth="8" fill="transparent"
                   strokeDasharray="314.15"
-                  className={`bg-clip-text text-transparent bg-gradient-to-r ${themeConfig.accent} animate-[progress_2s_ease-in-out_infinite]`}
+                  className={`bg-clip-text text-transparent bg-gradient-to-r ${themeConfig.accent} animate-[progress_1s_ease-in-out_infinite]`}
                   style={{ stroke: `url(#progressGradient-${theme})`, strokeLinecap: 'round' }}
                 />
               </svg>
+              
               <div className="absolute inset-0 flex items-center justify-center">
-                <Activity className={`animate-pulse ${themeConfig.textAccent}`} size={40} />
+                <div className="relative flex items-center justify-center">
+                  <Activity className="relative z-10 drop-shadow-[0_0_25px_currentColor]" size={56} />
+                  <Zap className="absolute z-0 animate-ping opacity-60" size={64} />
+                </div>
               </div>
             </div>
             
@@ -724,9 +1009,21 @@ const App: React.FC = () => {
         )}
 
         {error && (
-          <div className="max-w-2xl mx-auto bg-red-500/5 border border-red-500/10 p-4 rounded-xl flex gap-4 items-start mb-4 shadow-lg">
-            <AlertTriangle className="text-red-500" size={20} />
-            <p className="text-sm text-red-400 font-medium leading-snug">{error}</p>
+          <div className="max-w-2xl mx-auto bg-red-500/5 border border-red-500/10 p-4 rounded-xl flex flex-col gap-3 mb-4 shadow-lg">
+            <div className="flex gap-4 items-start">
+              <AlertTriangle className="text-red-500 shrink-0" size={20} />
+              <p className="text-sm text-red-400 font-medium leading-snug flex-1">{error}</p>
+              {detailedError && (
+                <button
+                  onClick={() => copyToClipboard(detailedError)}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all border border-red-500/20 shrink-0"
+                  title={t.copyException}
+                >
+                  {isCopied ? <Check size={12} className="text-emerald-400" /> : <Clipboard size={12} />}
+                  {isCopied ? t.copied : t.copyException}
+                </button>
+              )}
+            </div>
           </div>
         )}
 
