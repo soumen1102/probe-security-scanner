@@ -154,7 +154,7 @@ const translations = {
     intelSource: "Intel Source",
     action: "Action",
     intelLink: "Intel Link",
-    footerText: "DISTRIBUTED FORENSIC NODE | V1.2-STABLE",
+    footerText: "DISTRIBUTED FORENSIC NODE | V1.3-STABLE",
     viewMore: "View More",
     detailsTitle: "Forensic Detail",
     buyCoffee: "Buy me a coffee",
@@ -244,7 +244,7 @@ const translations = {
     intelSource: "इंटेलिजेंस स्रोत",
     action: "कार्रवाई",
     intelLink: "इंटेल लिंक",
-    footerText: "वितरित फोरेंसिक नोड | V1.2-स्टेबल",
+    footerText: "वितरित फोरेंसिक नोड | V1.3-स्टेबल",
     viewMore: "और देखें",
     detailsTitle: "फोरेंसिक विवरण",
     buyCoffee: "कॉफी खरीदें",
@@ -620,7 +620,7 @@ const App: React.FC = () => {
                   aria-pressed={language === l}
                 >
                   <Languages size={12} />
-                  {l === 'en' ? 'EN' : 'हि'}
+                  {l === 'en' ? 'EN' : 'हि 🇮🇳'}
                 </button>
               ))}
             </nav>
@@ -710,7 +710,7 @@ const App: React.FC = () => {
                     className={`py-2 text-xs rounded-lg transition-all font-black uppercase flex items-center justify-center gap-2 ${language === l ? 'bg-blue-500 text-white' : 'text-slate-500 hover:text-slate-300'}`}
                   >
                     <Languages size={14} />
-                    {l === 'en' ? 'English' : 'हिन्दी'}
+                    {l === 'en' ? 'English' : 'हिन्दी 🇮🇳'}
                   </button>
                 ))}
               </div>
