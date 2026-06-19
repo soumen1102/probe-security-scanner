@@ -49,6 +49,7 @@ import {
   User,
   ShieldQuestion,
   Coffee,
+  CreditCard,
   Cloud,
   ToggleLeft,
   ToggleRight,
@@ -57,7 +58,7 @@ import {
 } from 'lucide-react';
 import { Logo } from './components/Logo';
 import { Captcha } from './components/Captcha';
-import { performUrlScan, GeminiProxy } from './services/geminiService';
+import { performUrlScan, GeminiProxy, generateSimulatedScan } from './services/geminiService';
 import { ScanResult, GroundingSource, Incident, ScanConfig } from './types';
 import { generatePdfReport } from './utils/pdfGenerator';
 
@@ -176,6 +177,10 @@ const translations = {
     testFailure: "API Connection Failed",
     copyException: "Copy Exception",
     copied: "Copied!",
+    quotaTitle: "Global Threat Engine Capacity Limit",
+    quotaDescription: "Our high-capacity security intelligence pipelines are currently experiencing extremely high request volume. You can wait a minute for the nodes to refresh, or configure your private GEMINI_API_KEY environment variable in your hosting platform. Alternatively, you can run a localized simulated forensic scan to test the interface configuration and threat intelligence map.",
+    runSimulatedBtn: "Run Simulated Cyber Audit",
+    simulatedLabel: "SIMULATED OFFLINE AUDIT",
     useCaseText: {
       secops: "Instantly validate if web perimeters are protected by Cloudflare, Akamai, or AWS WAF.",
       itpro: "Verify SSL/TLS configurations, protocol support, and certificate validity for any domain.",
@@ -266,6 +271,10 @@ const translations = {
     testFailure: "API कनेक्शन विफल",
     copyException: "अपवाद कॉपी करें",
     copied: "कॉपी किया गया!",
+    quotaTitle: "वैश्विक थ्रेट इंजन क्षमता सीमा",
+    quotaDescription: "हमारे उच्च-क्षमता सुरक्षा खुफिया पाइपलाइनों में वर्तमान में बेहद उच्च मांग है। आप नोड्स के रीफ्रेश होने के लिए एक मिनट प्रतीक्षा कर सकते हैं, या अपने निजी GEMINI_API_KEY वातावरण चर को कॉन्फ़िगर कर सकते हैं। इसके अलावा, आप इंटरफ़ेस कॉन्फ़िगरेशन का ऑफ़लाइन परीक्षण करने के लिए एक सिम्युलेटेड फोरेंसिक स्कैन चला सकते हैं।",
+    runSimulatedBtn: "सिम्युलेटेड साइबर ऑडिट चलाएं",
+    simulatedLabel: "सिम्युलेटेड ऑफ़लाइन ऑडिट",
     useCaseText: {
       secops: "देखें कि क्या वेब परिधि क्लाउडफ्लेयर या AWS WAF द्वारा सुरक्षित है।",
       itpro: "किसी भी डोमेन के लिए SSL/TLS कॉन्फ़िगरेशन और प्रमाणपत्र वैधता सत्यापित करें।",
@@ -286,6 +295,7 @@ const App: React.FC = () => {
   const [sources, setSources] = useState<GroundingSource[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [detailedError, setDetailedError] = useState<string | null>(null);
+  const [isQuotaError, setIsQuotaError] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
   const [theme, setTheme] = useState<Theme>('slate');
   const [fontSize, setFontSize] = useState<FontSize>('lg');
@@ -410,6 +420,7 @@ const App: React.FC = () => {
     setIsScanning(true);
     setError(null);
     setDetailedError(null);
+    setIsQuotaError(false);
     setIsCopied(false);
     setScanResult(null);
     setScanDuration(0);
@@ -434,6 +445,16 @@ const App: React.FC = () => {
       });
     } catch (err: any) {
       console.error("Forensic Scan Exception:", err);
+      
+      const isQuota = (
+        err?.status === 429 || 
+        String(err?.message || '').toLowerCase().includes('quota') || 
+        String(err?.message || '').toLowerCase().includes('resource_exhausted') || 
+        String(err?.message || '').toLowerCase().includes('rate limit') ||
+        String(err?.message || '').toLowerCase().includes('exhausted')
+      );
+      
+      setIsQuotaError(isQuota);
       setError(err.message || t.genericError);
       
       let fullTrace = "";
@@ -462,6 +483,50 @@ const App: React.FC = () => {
       setDetailedError(fullTrace);
       setCaptchaKey(prev => prev + 1);
       setIsCaptchaVerified(false);
+    } finally {
+      setIsScanning(false);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    }
+  };
+
+  const handleSimulatedScan = async (targetUrl: string) => {
+    setIsScanning(true);
+    setError(null);
+    setDetailedError(null);
+    setIsQuotaError(false);
+    setIsCopied(false);
+    setScanResult(null);
+    setScanDuration(0);
+    setFinalDuration(null);
+
+    const startTime = Date.now();
+    timerRef.current = window.setInterval(() => {
+      setScanDuration(Math.floor((Date.now() - startTime) / 1000));
+    }, 100);
+
+    // Sleep for 3.5 seconds so the user can enjoy the high-fidelity scanning animation!
+    await new Promise(resolve => setTimeout(resolve, 3500));
+
+    try {
+      const result = generateSimulatedScan(targetUrl, language, scanConfig);
+      setScanResult(result);
+      setSources([
+        { title: language === 'hi' ? 'सिम्युलेटेड थ्रेट इंटेलिजेंस फ़ीड' : "Simulated Threat Intelligence Feed Source", uri: "https://cve.mitre.org" },
+        { title: language === 'hi' ? 'एनीकास्ट एज रक्षक' : "Edge Threat Shield Diagnostics", uri: "https://shodan.io" }
+      ]);
+      setCaptchaKey(prev => prev + 1);
+      setIsCaptchaVerified(false);
+      setFinalDuration(Math.floor((Date.now() - startTime) / 1000));
+      
+      setScanHistory(prev => {
+        const newItem = { url: targetUrl, score: result.masterRating, timestamp: new Date().toISOString() };
+        return [newItem, ...prev].slice(0, 10);
+      });
+    } catch (err: any) {
+      setError(err.message || "Simulation generation failed");
     } finally {
       setIsScanning(false);
       if (timerRef.current) {
@@ -1009,21 +1074,55 @@ const App: React.FC = () => {
         )}
 
         {error && (
-          <div className="max-w-2xl mx-auto bg-red-500/5 border border-red-500/10 p-4 rounded-xl flex flex-col gap-3 mb-4 shadow-lg">
-            <div className="flex gap-4 items-start">
-              <AlertTriangle className="text-red-500 shrink-0" size={20} />
-              <p className="text-sm text-red-400 font-medium leading-snug flex-1">{error}</p>
-              {detailedError && (
-                <button
-                  onClick={() => copyToClipboard(detailedError)}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all border border-red-500/20 shrink-0"
-                  title={t.copyException}
-                >
-                  {isCopied ? <Check size={12} className="text-emerald-400" /> : <Clipboard size={12} />}
-                  {isCopied ? t.copied : t.copyException}
-                </button>
-              )}
-            </div>
+          <div className="max-w-2xl mx-auto flex flex-col gap-4 mb-4">
+            {isQuotaError ? (
+              <div className="bg-amber-500/10 border border-amber-500/25 p-6 sm:p-8 rounded-3xl flex flex-col gap-6 shadow-2xl relative overflow-hidden backdrop-blur-md text-left">
+                <div className="absolute top-0 left-0 w-2 h-full bg-amber-500"></div>
+                <div className="flex gap-4 items-start">
+                  <ShieldQuestion className="text-amber-400 shrink-0 animate-pulse mt-0.5" size={28} />
+                  <div className="space-y-2 flex-1">
+                    <h3 className="text-lg font-black uppercase tracking-tight text-amber-300">{t.quotaTitle}</h3>
+                    <p className="text-sm text-slate-300 leading-relaxed font-semibold">{t.quotaDescription}</p>
+                  </div>
+                </div>
+                
+                <div className="flex flex-col sm:flex-row items-center gap-4 pt-2 border-t border-slate-850 mt-2">
+                  <button
+                    onClick={() => handleSimulatedScan(url)}
+                    className="w-full sm:w-auto px-6 py-3 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all shadow-[0_0_15px_rgba(245,158,11,0.4)] hover:shadow-[0_0_25px_rgba(245,158,11,0.6)] hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    <span>⚡ {t.runSimulatedBtn}</span>
+                  </button>
+                  {detailedError && (
+                    <button
+                      onClick={() => copyToClipboard(detailedError)}
+                      className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-3 bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white rounded-xl text-xs font-black uppercase tracking-widest transition-all border border-slate-800 shrink-0"
+                      title={t.copyException}
+                    >
+                      {isCopied ? <Check size={12} className="text-emerald-400" /> : <Clipboard size={12} />}
+                      {isCopied ? t.copied : t.copyException}
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="bg-red-500/5 border border-red-500/10 p-4 rounded-xl flex flex-col gap-3 shadow-lg text-left">
+                <div className="flex gap-4 items-start">
+                  <AlertTriangle className="text-red-500 shrink-0" size={20} />
+                  <p className="text-sm text-red-400 font-medium leading-snug flex-1">{error}</p>
+                  {detailedError && (
+                    <button
+                      onClick={() => copyToClipboard(detailedError)}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all border border-red-500/20 shrink-0"
+                      title={t.copyException}
+                    >
+                      {isCopied ? <Check size={12} className="text-emerald-400" /> : <Clipboard size={12} />}
+                      {isCopied ? t.copied : t.copyException}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1042,6 +1141,11 @@ const App: React.FC = () => {
                     {scanResult.masterRating > 75 ? <ShieldCheck size={14} className="inline mr-2" /> : <AlertTriangle size={14} className="inline mr-2" />} 
                     {t.masterIndex}
                   </div>
+                  {sources.some(s => s.title.includes('Simulated') || s.title.includes('सिम्युलेटेड')) && (
+                    <div className="px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-[0.2em] border bg-amber-500/10 text-amber-400 border-amber-500/20">
+                      ⚠️ {t.simulatedLabel}
+                    </div>
+                  )}
                   <span className="text-slate-500 text-[11px] font-mono truncate max-w-[250px] sm:max-w-md bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">{scanResult.url}</span>
                 </div>
                 <div className="space-y-3">
@@ -1275,13 +1379,39 @@ const App: React.FC = () => {
         )}
       </main>
 
-      <footer className="mt-auto border-t border-slate-900/50 pt-6 px-6 pb-6 flex flex-col sm:flex-row justify-between items-center gap-4">
-        <div className={`text-[10px] font-black uppercase tracking-[0.2em] ${themeConfig.textAccent} text-center sm:text-left leading-relaxed drop-shadow-sm`}>
+      <footer className="mt-auto border-t border-slate-900/50 pt-6 px-6 pb-6 flex flex-col md:flex-row justify-between items-center gap-6">
+        <div className={`text-[10px] font-black uppercase tracking-[0.2em] ${themeConfig.textAccent} text-center md:text-left leading-relaxed drop-shadow-sm`}>
           © 2026 PROBE WEB SECURITY SCANNER | {t.footerText}
         </div>
-        <div className="flex items-center gap-4">
-          <a href="https://www.linkedin.com/in/mukherjee/" target="_blank" className={`flex items-center gap-2 text-[10px] font-black ${themeConfig.textAccent} hover:brightness-125 transition-all uppercase tracking-widest drop-shadow-sm`}>
-            <Linkedin size={14} /> SOUMEN MUKHERJEE
+        <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6 md:gap-8">
+          <a 
+            href="https://buymeacoffee.com/soumenm" 
+            target="_blank" 
+            rel="noopener noreferrer" 
+            className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-[#FFDD00] hover:text-white drop-shadow-[0_0_8px_rgba(255,221,0,0.85)] hover:drop-shadow-[0_0_15px_rgba(255,221,0,1)] transition-all duration-300 hover:scale-110 active:scale-95 shrink-0"
+          >
+            <Coffee size={14} className="animate-[bounce_2s_infinite]" /> 
+            <span>Buy Me A Coffee</span>
+          </a>
+
+          <a 
+            href="https://paypal.me/soumenm1207" 
+            target="_blank" 
+            rel="noopener noreferrer" 
+            className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-[#00E5FF] hover:text-white drop-shadow-[0_0_8px_rgba(0,229,255,0.85)] hover:drop-shadow-[0_0_15px_rgba(0,229,255,1)] transition-all duration-300 hover:scale-110 active:scale-95 shrink-0"
+          >
+            <CreditCard size={14} /> 
+            <span>PayPal.Me</span>
+          </a>
+
+          <a 
+            href="https://www.linkedin.com/in/mukherjee/" 
+            target="_blank" 
+            rel="noopener noreferrer" 
+            className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-[#00FF55] hover:text-white drop-shadow-[0_0_8px_rgba(0,255,85,0.85)] hover:drop-shadow-[0_0_15px_rgba(0,255,85,1)] transition-all duration-300 hover:scale-110 active:scale-95 shrink-0"
+          >
+            <Linkedin size={14} /> 
+            <span>SOUMEN MUKHERJEE</span>
           </a>
         </div>
       </footer>
