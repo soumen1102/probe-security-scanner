@@ -58,7 +58,7 @@ import {
 } from 'lucide-react';
 import { Logo } from './components/Logo';
 import { Captcha } from './components/Captcha';
-import { performUrlScan, GeminiProxy, generateSimulatedScan } from './services/geminiService';
+import { performUrlScan, GeminiProxy, generateSimulatedScan, performLocalTechnicalScan } from './services/geminiService';
 import { ScanResult, GroundingSource, Incident, ScanConfig } from './types';
 import { generatePdfReport } from './utils/pdfGenerator';
 
@@ -432,7 +432,7 @@ const App: React.FC = () => {
     }, 100);
 
     try {
-      const { result, sources: groundingSources } = await performUrlScan(targetUrl, language, scanConfig);
+      const { result, sources: groundingSources } = await performLocalTechnicalScan(targetUrl, language, scanConfig);
       setScanResult(result);
       setSources(groundingSources);
       setCaptchaKey(prev => prev + 1);
